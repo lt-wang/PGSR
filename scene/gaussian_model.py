@@ -23,59 +23,102 @@ from utils.general_utils import strip_symmetric, build_scaling_rotation
 from pytorch3d.transforms import quaternion_to_matrix
 
 def dilate(bin_img, ksize=5):
+    """
+    对二值图像进行膨胀操作
+    
+    参数:
+        bin_img: 二值图像
+        ksize: 膨胀核大小
+    
+    返回:
+        膨胀后的图像
+    """
     pad = (ksize - 1) // 2
     bin_img = torch.nn.functional.pad(bin_img, pad=[pad, pad, pad, pad], mode='reflect')
     out = torch.nn.functional.max_pool2d(bin_img, kernel_size=ksize, stride=1, padding=0)
     return out
 
 def erode(bin_img, ksize=5):
+    """
+    对二值图像进行腐蚀操作
+    
+    参数:
+        bin_img: 二值图像
+        ksize: 腐蚀核大小
+    
+    返回:
+        腐蚀后的图像
+    """
     out = 1 - dilate(1 - bin_img, ksize)
     return out
 
 class GaussianModel:
+    """
+    3D高斯点云模型类
+    实现了平面3D高斯的表示、优化和密集化策略
+    每个高斯由位置、尺度、旋转、不透明度和球谐系数描述
+    """
 
     def setup_functions(self):
+        """
+        设置激活函数和协方差计算函数
+        """
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
             actual_covariance = L @ L.transpose(1, 2)
             symm = strip_symmetric(actual_covariance)
             return symm
         
+        # 尺度使用指数激活函数，确保始终为正
         self.scaling_activation = torch.exp
         self.scaling_inverse_activation = torch.log
 
         self.covariance_activation = build_covariance_from_scaling_rotation
 
+        # 不透明度使用sigmoid激活函数，限制在[0,1]
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
 
+        # 旋转四元数归一化
         self.rotation_activation = torch.nn.functional.normalize
 
     def __init__(self, sh_degree : int):
+        """
+        初始化高斯模型
+        
+        参数:
+            sh_degree: 球谐函数的最大阶数
+        """
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
-        self._xyz = torch.empty(0)
-        self._knn_f = torch.empty(0)
-        self._features_dc = torch.empty(0)
-        self._features_rest = torch.empty(0)
-        self._scaling = torch.empty(0)
-        self._rotation = torch.empty(0)
-        self._opacity = torch.empty(0)
-        self.max_radii2D = torch.empty(0)
-        self.max_weight = torch.empty(0)
-        self.xyz_gradient_accum = torch.empty(0)
-        self.xyz_gradient_accum_abs = torch.empty(0)
-        self.denom = torch.empty(0)
-        self.denom_abs = torch.empty(0)
+        self._xyz = torch.empty(0)  # 高斯中心位置
+        self._knn_f = torch.empty(0)  # KNN特征
+        self._features_dc = torch.empty(0)  # 球谐函数DC分量（颜色）
+        self._features_rest = torch.empty(0)  # 球谐函数其余分量
+        self._scaling = torch.empty(0)  # 高斯尺度
+        self._rotation = torch.empty(0)  # 高斯旋转（四元数）
+        self._opacity = torch.empty(0)  # 不透明度
+        self.max_radii2D = torch.empty(0)  # 2D投影最大半径
+        self.max_weight = torch.empty(0)  # 最大权重
+        self.xyz_gradient_accum = torch.empty(0)  # 位置梯度累积
+        self.xyz_gradient_accum_abs = torch.empty(0)  # 位置绝对梯度累积
+        self.denom = torch.empty(0)  # 梯度累积计数
+        self.denom_abs = torch.empty(0)  # 绝对梯度累积计数
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
         self.knn_dists = None
         self.knn_idx = None
         self.setup_functions()
-        self.use_app = False
+        self.use_app = False  # 是否使用外观模型
 
     def capture(self):
+        """
+        捕获模型当前状态，用于保存检查点
+        
+        返回:
+            包含所有模型参数的元组
+        """
         return (
             self.active_sh_degree,
             self._xyz,
@@ -96,6 +139,13 @@ class GaussianModel:
         )
     
     def restore(self, model_args, training_args):
+        """
+        从保存的状态恢复模型
+        
+        参数:
+            model_args: 保存的模型参数
+            training_args: 训练参数
+        """
         (self.active_sh_degree, 
         self._xyz, 
         self._knn_f,
@@ -122,27 +172,42 @@ class GaussianModel:
 
     @property
     def get_scaling(self):
+        """获取激活后的高斯尺度"""
         return self.scaling_activation(self._scaling)
         
     @property
     def get_rotation(self):
+        """获取归一化后的旋转四元数"""
         return self.rotation_activation(self._rotation)
     
     @property
     def get_xyz(self):
+        """获取高斯中心位置"""
         return self._xyz
     
     @property
     def get_features(self):
+        """获取完整的球谐特征（DC + 其余分量）"""
         features_dc = self._features_dc
         features_rest = self._features_rest
         return torch.cat((features_dc, features_rest), dim=1)
     
     @property
     def get_opacity(self):
+        """获取激活后的不透明度"""
         return self.opacity_activation(self._opacity)
     
     def get_smallest_axis(self, return_idx=False):
+        """
+        获取高斯最小轴方向（用作法向量）
+        
+        参数:
+            return_idx: 是否返回最小轴的索引
+        
+        返回:
+            smallest_axis: 最小轴方向向量
+            smallest_axis_idx: 最小轴索引（如果return_idx=True）
+        """
         rotation_matrices = self.get_rotation_matrix()
         smallest_axis_idx = self.get_scaling.min(dim=-1)[1][..., None, None].expand(-1, 3, -1)
         smallest_axis = rotation_matrices.gather(2, smallest_axis_idx)
@@ -151,19 +216,42 @@ class GaussianModel:
         return smallest_axis.squeeze(dim=2)
     
     def get_normal(self, view_cam):
+        """
+        获取面向相机的法向量
+        确保法向量指向相机方向
+        
+        参数:
+            view_cam: 相机对象
+        
+        返回:
+            normal_global: 朝向相机的法向量
+        """
         normal_global = self.get_smallest_axis()
+        # 计算从高斯到相机的向量
         gaussian_to_cam_global = view_cam.camera_center - self._xyz
+        # 如果法向量背向相机，翻转它
         neg_mask = (normal_global * gaussian_to_cam_global).sum(-1) < 0.0
         normal_global[neg_mask] = -normal_global[neg_mask]
         return normal_global
     
     def get_rotation_matrix(self):
+        """将四元数转换为旋转矩阵"""
         return quaternion_to_matrix(self.get_rotation)
 
     def get_covariance(self, scaling_modifier = 1):
+        """
+        计算高斯的3D协方差矩阵
+        
+        参数:
+            scaling_modifier: 尺度修正因子
+        
+        返回:
+            协方差矩阵
+        """
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
     def oneupSHdegree(self):
+        """增加球谐函数的活动阶数（直到最大阶数）"""
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
@@ -522,20 +610,43 @@ class GaussianModel:
         self.denom_abs[update_filter] += 1
 
     def get_points_depth_in_depth_map(self, fov_camera, depth, points_in_camera_space, scale=1):
+        """
+        获取3D点在深度图中对应位置的深度值
+        用于多视图几何一致性检查
+        
+        参数:
+            fov_camera: 目标相机对象
+            depth: 深度图 (1, H, W)
+            points_in_camera_space: 相机空间中的3D点 (N, 3)
+            scale: 下采样比例
+        
+        返回:
+            map_z: 深度图中采样得到的深度值 (1, N)
+            mask: 有效点的掩码（在图像范围内且深度>0.1）(N,)
+        """
+        # 计算下采样起始位置
         st = max(int(scale/2)-1,0)
+        # 对深度图进行下采样
         depth_view = depth[None,:,st::scale,st::scale]
         W, H = int(fov_camera.image_width/scale), int(fov_camera.image_height/scale)
         depth_view = depth_view[:H, :W]
+        
+        # 将3D点投影到2D图像平面
         pts_projections = torch.stack(
                         [points_in_camera_space[:,0] * fov_camera.Fx / points_in_camera_space[:,2] + fov_camera.Cx,
                          points_in_camera_space[:,1] * fov_camera.Fy / points_in_camera_space[:,2] + fov_camera.Cy], -1).float()/scale
+        
+        # 创建掩码：点必须在图像范围内且深度大于0.1
         mask = (pts_projections[:, 0] > 0) & (pts_projections[:, 0] < W) &\
                (pts_projections[:, 1] > 0) & (pts_projections[:, 1] < H) & (points_in_camera_space[:,2] > 0.1)
 
+        # 将像素坐标归一化到[-1, 1]范围，用于grid_sample
         pts_projections[..., 0] /= ((W - 1) / 2)
         pts_projections[..., 1] /= ((H - 1) / 2)
         pts_projections -= 1
         pts_projections = pts_projections.view(1, -1, 1, 2)
+        
+        # 使用双线性插值从深度图中采样深度值
         map_z = torch.nn.functional.grid_sample(input=depth_view,
                                                 grid=pts_projections,
                                                 mode='bilinear',
@@ -545,11 +656,27 @@ class GaussianModel:
         return map_z, mask
     
     def get_points_from_depth(self, fov_camera, depth, scale=1):
+        """
+        从深度图反投影得到世界坐标系中的3D点
+        
+        参数:
+            fov_camera: 相机对象
+            depth: 深度图 (1, H, W)
+            scale: 下采样比例
+        
+        返回:
+            pts: 世界坐标系中的3D点 (H*W, 3)
+        """
+        # 计算下采样起始位置
         st = int(max(int(scale/2)-1,0))
+        # 对深度图进行下采样
         depth_view = depth.squeeze()[st::scale,st::scale]
+        # 获取相机射线方向
         rays_d = fov_camera.get_rays(scale=scale)
         depth_view = depth_view[:rays_d.shape[0], :rays_d.shape[1]]
+        # 计算相机坐标系中的3D点：射线方向 × 深度
         pts = (rays_d * depth_view[..., None]).reshape(-1,3)
+        # 转换到世界坐标系
         R = torch.tensor(fov_camera.R).float().cuda()
         T = torch.tensor(fov_camera.T).float().cuda()
         pts = (pts-T)@R.transpose(-1,-2)

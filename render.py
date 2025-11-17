@@ -29,6 +29,16 @@ import copy
 from collections import deque
 
 def clean_mesh(mesh, min_len=1000):
+    """
+    清理网格，移除小的三角形簇
+    
+    参数:
+        mesh: 输入的Open3D网格对象
+        min_len: 保留簇的最小三角形数量
+    
+    返回:
+        mesh_0: 清理后的网格
+    """
     with o3d.utility.VerbosityContextManager(o3d.utility.VerbosityLevel.Debug) as cm:
         triangle_clusters, cluster_n_triangles, cluster_area = (mesh.cluster_connected_triangles())
     triangle_clusters = np.asarray(triangle_clusters)
@@ -41,7 +51,14 @@ def clean_mesh(mesh, min_len=1000):
 
 def post_process_mesh(mesh, cluster_to_keep=1):
     """
-    Post-process a mesh to filter out floaters and disconnected parts
+    对网格进行后处理，过滤浮动和断开连接的部分
+    
+    参数:
+        mesh: 输入的Open3D网格对象
+        cluster_to_keep: 要保留的最大簇数量
+    
+    返回:
+        mesh_0: 后处理后的网格
     """
     import copy
     print("post processing the mesh to have {} clusterscluster_to_kep".format(cluster_to_keep))
@@ -52,8 +69,9 @@ def post_process_mesh(mesh, cluster_to_keep=1):
     triangle_clusters = np.asarray(triangle_clusters)
     cluster_n_triangles = np.asarray(cluster_n_triangles)
     cluster_area = np.asarray(cluster_area)
+    # 获取第n大的簇大小
     n_cluster = np.sort(cluster_n_triangles.copy())[-cluster_to_keep]
-    n_cluster = max(n_cluster, 50) # filter meshes smaller than 50
+    n_cluster = max(n_cluster, 50) # 过滤小于50个三角形的网格
     triangles_to_remove = cluster_n_triangles[triangle_clusters] < n_cluster
     mesh_0.remove_triangles_by_mask(triangles_to_remove)
     mesh_0.remove_unreferenced_vertices()
@@ -64,6 +82,23 @@ def post_process_mesh(mesh, cluster_to_keep=1):
 
 def render_set(model_path, name, iteration, views, scene, gaussians, pipeline, background, 
                app_model=None, max_depth=5.0, volume=None, use_depth_filter=False):
+    """
+    渲染一组视图并可选地进行TSDF融合
+    
+    参数:
+        model_path: 模型保存路径
+        name: 数据集名称（'train'或'test'）
+        iteration: 当前迭代次数
+        views: 要渲染的相机视图列表
+        scene: 场景对象
+        gaussians: 高斯模型
+        pipeline: 渲染管线参数
+        background: 背景颜色
+        app_model: 外观模型（可选）
+        max_depth: 最大深度值，用于TSDF融合
+        volume: TSDF体积对象（可选）
+        use_depth_filter: 是否使用深度过滤
+    """
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     render_depth_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders_depth")
@@ -136,6 +171,20 @@ def render_set(model_path, name, iteration, views, scene, gaussians, pipeline, b
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool,
                  max_depth : float, voxel_size : float, num_cluster: int, use_depth_filter : bool):
+    """
+    渲染训练集和测试集，并可选地提取网格
+    
+    参数:
+        dataset: 数据集参数
+        iteration: 渲染的迭代次数
+        pipeline: 渲染管线参数
+        skip_train: 是否跳过训练集渲染
+        skip_test: 是否跳过测试集渲染
+        max_depth: 最大深度值
+        voxel_size: 体素大小，用于TSDF融合
+        num_cluster: 网格后处理时保留的簇数量
+        use_depth_filter: 是否使用深度过滤
+    """
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)

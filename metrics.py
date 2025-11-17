@@ -22,6 +22,18 @@ from utils.image_utils import psnr
 from argparse import ArgumentParser
 
 def readImages(renders_dir, gt_dir):
+    """
+    从目录中读取渲染图像和真实图像
+    
+    参数:
+        renders_dir: 渲染图像目录
+        gt_dir: 真实图像目录
+    
+    返回:
+        renders: 渲染图像列表
+        gts: 真实图像列表
+        image_names: 图像文件名列表
+    """
     renders = []
     gts = []
     image_names = []
@@ -34,6 +46,13 @@ def readImages(renders_dir, gt_dir):
     return renders, gts, image_names
 
 def evaluate(model_paths):
+    """
+    评估模型的渲染质量
+    计算SSIM、PSNR和LPIPS指标
+    
+    参数:
+        model_paths: 模型路径列表
+    """
 
     full_dict = {}
     per_view_dict = {}

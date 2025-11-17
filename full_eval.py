@@ -12,6 +12,7 @@
 import os
 from argparse import ArgumentParser
 
+# 定义各个数据集的场景
 mipnerf360_outdoor_scenes = ["bicycle", "flowers", "garden", "stump", "treehill"]
 mipnerf360_indoor_scenes = ["room", "counter", "kitchen", "bonsai"]
 tanks_and_temples_scenes = ["truck", "train"]
@@ -24,6 +25,7 @@ parser.add_argument("--skip_metrics", action="store_true")
 parser.add_argument("--output_path", default="./eval")
 args, _ = parser.parse_known_args()
 
+# 收集所有场景
 all_scenes = []
 all_scenes.extend(mipnerf360_outdoor_scenes)
 all_scenes.extend(mipnerf360_indoor_scenes)
@@ -52,6 +54,7 @@ if not args.skip_training:
         os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args)
 
 if not args.skip_rendering:
+    # 收集所有源路径
     all_sources = []
     for scene in mipnerf360_outdoor_scenes:
         all_sources.append(args.mipnerf360 + "/" + scene)
@@ -63,11 +66,13 @@ if not args.skip_rendering:
         all_sources.append(args.deepblending + "/" + scene)
 
     common_args = " --quiet --eval --skip_train"
+    # 在两个迭代点渲染所有场景
     for scene, source in zip(all_scenes, all_sources):
         os.system("python render.py --iteration 7000 -s " + source + " -m " + args.output_path + "/" + scene + common_args)
         os.system("python render.py --iteration 30000 -s " + source + " -m " + args.output_path + "/" + scene + common_args)
 
 if not args.skip_metrics:
+    # 评估所有场景的指标
     scenes_string = ""
     for scene in all_scenes:
         scenes_string += "\"" + args.output_path + "/" + scene + "\" "

@@ -38,23 +38,44 @@ import time
 import torch.nn.functional as F
 
 def setup_seed(seed):
-     torch.manual_seed(seed)
-     torch.cuda.manual_seed_all(seed)
-     np.random.seed(seed)
-     random.seed(seed)
-     torch.backends.cudnn.deterministic = True
+    """
+    设置随机种子以确保结果的可重复性
+    
+    参数:
+        seed: 随机种子值
+    """
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
 setup_seed(22)
 
 def gen_virtul_cam(cam, trans_noise=1.0, deg_noise=15.0):
+    """
+    生成一个虚拟相机，通过对给定相机施加随机扰动
+    
+    参数:
+        cam: 原始相机对象
+        trans_noise: 平移噪声的范围（单位：米）
+        deg_noise: 旋转噪声的范围（单位：度）
+    
+    返回:
+        virtul_cam: 生成的虚拟相机对象
+    """
+    # 构建4x4的相机到世界的变换矩阵
     Rt = np.zeros((4, 4))
     Rt[:3, :3] = cam.R.transpose()
     Rt[:3, 3] = cam.T
     Rt[3, 3] = 1.0
     C2W = np.linalg.inv(Rt)
 
+    # 生成随机的平移和旋转扰动
     translation_perturbation = np.random.uniform(-trans_noise, trans_noise, 3)
     rotation_perturbation = np.random.uniform(-deg_noise, deg_noise, 3)
     rx, ry, rz = np.deg2rad(rotation_perturbation)
+    
+    # 构建旋转矩阵（绕x、y、z轴）
     Rx = np.array([[1, 0, 0],
                     [0, np.cos(rx), -np.sin(rx)],
                     [0, np.sin(rx), np.cos(rx)]])
@@ -68,9 +89,12 @@ def gen_virtul_cam(cam, trans_noise=1.0, deg_noise=15.0):
                     [0, 0, 1]])
     R_perturbation = Rz @ Ry @ Rx
 
+    # 应用扰动到相机姿态
     C2W[:3, :3] = C2W[:3, :3] @ R_perturbation
     C2W[:3, 3] = C2W[:3, 3] + translation_perturbation
     Rt = np.linalg.inv(C2W)
+    
+    # 创建虚拟相机对象
     virtul_cam = Camera(100000, Rt[:3, :3].transpose(), Rt[:3, 3], cam.FoVx, cam.FoVy,
                         cam.image_width, cam.image_height,
                         cam.image_path, cam.image_name, 100000,
@@ -79,9 +103,22 @@ def gen_virtul_cam(cam, trans_noise=1.0, deg_noise=15.0):
     return virtul_cam
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+    """
+    主训练函数，执行3D高斯点云的训练过程
+    
+    参数:
+        dataset: 数据集参数
+        opt: 优化参数
+        pipe: 渲染管线参数
+        testing_iterations: 进行测试的迭代次数列表
+        saving_iterations: 保存模型的迭代次数列表
+        checkpoint_iterations: 保存检查点的迭代次数列表
+        checkpoint: 用于恢复训练的检查点路径
+        debug_from: 开始调试的迭代次数
+    """
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    # backup main code
+    # 备份主要代码文件到模型路径
     cmd = f'cp ./train.py {dataset.model_path}/'
     os.system(cmd)
     cmd = f'cp -rf ./arguments {dataset.model_path}/'
@@ -93,33 +130,39 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     cmd = f'cp -rf ./utils {dataset.model_path}/'
     os.system(cmd)
 
+    # 初始化高斯模型和场景
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
+    # 初始化外观模型
     app_model = AppModel()
     app_model.train()
     app_model.cuda()
     
+    # 如果提供了检查点，加载模型参数
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
         app_model.load_weights(scene.model_path)
 
+    # 设置背景颜色（白色或黑色）
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
+    # 初始化训练相关变量
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
     viewpoint_stack = None
-    ema_loss_for_log = 0.0
-    ema_single_view_for_log = 0.0
-    ema_multi_view_geo_for_log = 0.0
-    ema_multi_view_pho_for_log = 0.0
+    ema_loss_for_log = 0.0  # 指数移动平均损失
+    ema_single_view_for_log = 0.0  # 单视图损失的EMA
+    ema_multi_view_geo_for_log = 0.0  # 多视图几何损失的EMA
+    ema_multi_view_pho_for_log = 0.0  # 多视图光度损失的EMA
     normal_loss, geo_loss, ncc_loss = None, None, None
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    # 创建调试输出路径
     debug_path = os.path.join(scene.model_path, "debug")
     os.makedirs(debug_path, exist_ok=True)
 
@@ -141,51 +184,59 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         iter_start.record()
         gaussians.update_learning_rate(iteration)
-        # Every 1000 its we increase the levels of SH up to a maximum degree
+        
+        # 每1000次迭代增加球谐函数的阶数
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
-        # Pick a random Camera
+        # 随机选择一个训练相机
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
+        # 获取真实图像
         gt_image, gt_image_gray = viewpoint_cam.get_image()
+        # 在迭代1000次后启用外观补偿
         if iteration > 1000 and opt.exposure_compensation:
             gaussians.use_app = True
 
-        # Render
+        # 渲染图像
         if (iteration - 1) == debug_from:
             pipe.debug = True
 
+        # 设置背景颜色（随机或固定）
         bg = torch.rand((3), device="cuda") if opt.random_background else background
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, app_model=app_model,
                             return_plane=iteration>opt.single_view_weight_from_iter, return_depth_normal=iteration>opt.single_view_weight_from_iter)
         image, viewspace_point_tensor, visibility_filter, radii = \
             render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         
-        # Loss
+        # 计算损失
         ssim_loss = (1.0 - ssim(image, gt_image))
+        # 如果使用外观模型并且SSIM损失较小，使用外观补偿后的图像
         if 'app_image' in render_pkg and ssim_loss < 0.5:
             app_image = render_pkg['app_image']
             Ll1 = l1_loss(app_image, gt_image)
         else:
             Ll1 = l1_loss(image, gt_image)
+        # 组合L1损失和SSIM损失
         image_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * ssim_loss
         loss = image_loss.clone()
         
-        # scale loss
+        # 尺度损失：惩罚过小的高斯
         if visibility_filter.sum() > 0:
             scale = gaussians.get_scaling[visibility_filter]
             sorted_scale, _ = torch.sort(scale, dim=-1)
             min_scale_loss = sorted_scale[...,0]
             loss += opt.scale_loss_weight * min_scale_loss.mean()
-        # single-view loss
+            
+        # 单视图损失：法线一致性损失
         if iteration > opt.single_view_weight_from_iter:
             weight = opt.single_view_weight
-            normal = render_pkg["rendered_normal"]
-            depth_normal = render_pkg["depth_normal"]
+            normal = render_pkg["rendered_normal"]  # 渲染的法线
+            depth_normal = render_pkg["depth_normal"]  # 从深度计算的法线
 
+            # 计算图像梯度权重，用于边缘感知
             image_weight = (1.0 - get_img_grad_weight(gt_image))
             image_weight = (image_weight).clamp(0,1).detach() ** 2
             if not opt.wo_image_weight:
@@ -195,7 +246,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 normal_loss = weight * (((depth_normal - normal)).abs().sum(0)).mean()
             loss += (normal_loss)
 
-        # multi-view loss
+        # 多视图损失：几何一致性和光度一致性
         if iteration > opt.multi_view_weight_from_iter:
             nearest_cam = None if len(viewpoint_cam.nearest_id) == 0 else scene.getTrainCameras()[random.sample(viewpoint_cam.nearest_id,1)[0]]
             use_virtul_cam = False
@@ -402,8 +453,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     app_model.save_weights(scene.model_path, opt.iterations)
     torch.cuda.empty_cache()
 
-def prepare_output_and_logger(args):    
+def prepare_output_and_logger(args):
+    """
+    准备输出目录和日志记录器
+    
+    参数:
+        args: 命令行参数
+    
+    返回:
+        tb_writer: TensorBoard写入器对象
+    """
     if not args.model_path:
+        # 如果未指定模型路径，生成唯一的输出路径
         if os.getenv('OAR_JOB_ID'):
             unique_str=os.getenv('OAR_JOB_ID')
         else:
@@ -411,13 +472,14 @@ def prepare_output_and_logger(args):
         args.model_path = os.path.join("./output/", unique_str[0:10])
 
         
-    # Set up output folder
+    # 设置输出文件夹
     print("Output folder: {}".format(args.model_path))
     os.makedirs(args.model_path, exist_ok = True)
+    # 保存配置参数
     with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
         cfg_log_f.write(str(Namespace(**vars(args))))
 
-    # Create Tensorboard writer
+    # 创建TensorBoard写入器
     tb_writer = None
     if TENSORBOARD_FOUND:
         tb_writer = SummaryWriter(args.model_path)
@@ -426,12 +488,28 @@ def prepare_output_and_logger(args):
     return tb_writer
 
 def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, app_model):
+    """
+    生成训练报告，记录损失和验证结果
+    
+    参数:
+        tb_writer: TensorBoard写入器
+        iteration: 当前迭代次数
+        Ll1: L1损失值
+        loss: 总损失值
+        l1_loss: L1损失函数
+        elapsed: 经过的时间
+        testing_iterations: 测试迭代次数列表
+        scene: 场景对象
+        renderFunc: 渲染函数
+        renderArgs: 渲染参数
+        app_model: 外观模型
+    """
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
 
-    # Report test and samples of training set
+    # 报告测试集和训练集的样本结果
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 

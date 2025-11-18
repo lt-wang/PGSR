@@ -40,6 +40,14 @@ conda activate pgsr
 
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 #replace your cuda version
 pip install -r requirements.txt
+
+
+cd submodules
+#增加Nvdiffrast
+git clone https://github.com/NVlabs/nvdiffrast
+pip install submodules/nvdiffrast
+cd ..
+
 pip install submodules/diff-plane-rasterization
 pip install submodules/simple-knn
 ```

@@ -41,7 +41,7 @@ def loadCam(args, id, cam_info, resolution_scale):
     sys.stdout.write('\r')
     sys.stdout.write("load camera {}".format(id))
     sys.stdout.flush()
-
+    
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY,
                   image_width=resolution[0], image_height=resolution[1],
@@ -49,7 +49,8 @@ def loadCam(args, id, cam_info, resolution_scale):
                   image_name=cam_info.image_name, uid=cam_info.global_id, 
                   preload_img=args.preload_img, 
                   ncc_scale=args.ncc_scale,
-                  data_device=args.data_device)
+                  data_device=args.data_device,
+                  preload_normal=args.preload_normal)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []

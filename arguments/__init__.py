@@ -55,6 +55,7 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
         self.preload_img = True
+        self.preload_normal = True
         self.ncc_scale = 1.0
         self.multi_view_num = 8
         self.multi_view_max_angle = 30
@@ -97,6 +98,7 @@ class OptimizationParams(ParamGroup):
         self.wo_image_weight = False
         self.single_view_weight = 0.015
         self.single_view_weight_from_iter = 7000
+        self.lambda_mask_entropy = 0.01
 
         self.use_virtul_cam = False
         self.virtul_cam_prob = 0.5

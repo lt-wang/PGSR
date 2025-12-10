@@ -14,7 +14,45 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
 import numpy as np
-
+def cos_loss(x, y):
+    """
+    计算余弦相似度损失
+    
+    参数:
+        x: 第一个向量张量，shape为 (C, H, W) 或 (C, N)
+           其中C是通道数（如3用于RGB法线），H/W是高度/宽度，N是像素数
+        y: 第二个向量张量，shape与x相同
+    
+    返回:
+        loss: 标量损失值
+    """
+    # 确保输入形状相同
+    assert x.shape == y.shape, f"Input shapes must match: {x.shape} vs {y.shape}"
+    assert x.dim() in [2, 3], f"Expected 2D or 3D tensor, got shape {x.shape}"
+    
+    # 获取通道维度
+    C = x.shape[0]
+    
+    # 计算每个像素位置的L2范数（沿通道维度）
+    x_norm = torch.norm(x, p=2, dim=0, keepdim=True)  # (1, H, W) 或 (1, N)
+    y_norm = torch.norm(y, p=2, dim=0, keepdim=True)  # (1, H, W) 或 (1, N)
+    
+    # 避免除以零
+    x_norm = torch.clamp(x_norm, min=1e-8)
+    y_norm = torch.clamp(y_norm, min=1e-8)
+    
+    # 归一化向量（沿通道维度）
+    x_normalized = x / x_norm  # (C, H, W) 或 (C, N)
+    y_normalized = y / y_norm  # (C, H, W) 或 (C, N)
+    
+    # 计算余弦相似度：对应通道的点积
+    cosine_similarity = (x_normalized * y_normalized).sum(dim=0)  # (H, W) 或 (N,)
+    
+    # 余弦相似度范围是[-1, 1]，转换为损失值[0, 2]
+    # loss = 1 - cosine_similarity，范围是[0, 2]
+    loss = (1.0 - cosine_similarity).mean()
+    
+    return loss
 def l1_loss(network_output, gt):
     """计算L1损失（平均绝对误差）"""
     return torch.abs((network_output - gt)).mean()

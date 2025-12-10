@@ -1,4 +1,4 @@
-import pyrender, trimesh
+import trimesh
 from scene.colmap_loader import read_intrinsics_binary, read_extrinsics_binary
 from utils.graphics_utils import focal2fov
 import numpy as np
@@ -11,47 +11,50 @@ from tqdm import tqdm
 
 # 设置为软件渲染后端，支持无显示器环境
 # os.environ['PYOPENGL_PLATFORM'] = 'osmesa'
+# import pyrender
+# pyrender.core.SceneViewer = None  # 禁止 viewer
+# pyrender.opengl.MesaPlatform = pyrender.platforms.osmesa.OsmMesaPlatform
 
-def get_camera(camera_intr, resolution=1):
-    if camera_intr.model=="SIMPLE_PINHOLE":
-        focal_length_x = camera_intr.params[0]
-        FovY = focal2fov(focal_length_x, camera_intr.height)
-        FovX = focal2fov(focal_length_x, camera_intr.width)
-    elif camera_intr.model=="PINHOLE":
-        focal_length_x = camera_intr.params[0]
-        focal_length_y = camera_intr.params[1]
-        FovY = focal2fov(focal_length_y, camera_intr.height)
-        FovX = focal2fov(focal_length_x, camera_intr.width)
-    else:
-        assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
+# def get_camera(camera_intr, resolution=1):
+#     if camera_intr.model=="SIMPLE_PINHOLE":
+#         focal_length_x = camera_intr.params[0]
+#         FovY = focal2fov(focal_length_x, camera_intr.height)
+#         FovX = focal2fov(focal_length_x, camera_intr.width)
+#     elif camera_intr.model=="PINHOLE":
+#         focal_length_x = camera_intr.params[0]
+#         focal_length_y = camera_intr.params[1]
+#         FovY = focal2fov(focal_length_y, camera_intr.height)
+#         FovX = focal2fov(focal_length_x, camera_intr.width)
+#     else:
+#         assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
         
-    width = camera_intr.width // resolution
-    height = camera_intr.height // resolution
+#     width = camera_intr.width // resolution
+#     height = camera_intr.height // resolution
 
-    if focal_length_x is None or focal_length_y is None:
-        if FovX is not None and FovY is not None:
-            # Convert FOV to radians
-            FovX_rad = math.radians(FovX)
-            FovY_rad = math.radians(FovY)
-            # Calculate focal lengths based on FOV and image dimensions
-            focal_length_x = width / (2 * math.tan(FovX_rad / 2))
-            focal_length_y = height / (2 * math.tan(FovY_rad / 2))
-        else:
-            raise ValueError("FovX, FovY or focal_length_x, focal_length_y is required")
+#     if focal_length_x is None or focal_length_y is None:
+#         if FovX is not None and FovY is not None:
+#             # Convert FOV to radians
+#             FovX_rad = math.radians(FovX)
+#             FovY_rad = math.radians(FovY)
+#             # Calculate focal lengths based on FOV and image dimensions
+#             focal_length_x = width / (2 * math.tan(FovX_rad / 2))
+#             focal_length_y = height / (2 * math.tan(FovY_rad / 2))
+#         else:
+#             raise ValueError("FovX, FovY or focal_length_x, focal_length_y is required")
 
-    K = np.array([
-        [focal_length_x, 0, width / 2],
-        [0, focal_length_y, height / 2],
-        [0, 0, 1]
-    ])
+#     K = np.array([
+#         [focal_length_x, 0, width / 2],
+#         [0, focal_length_y, height / 2],
+#         [0, 0, 1]
+#     ])
 
-    camera = pyrender.IntrinsicsCamera(
-        fx=focal_length_x,
-        fy=focal_length_y,
-        cx=width / 2,
-        cy=height / 2,
-    )
-    return camera
+#     camera = pyrender.IntrinsicsCamera(
+#         fx=focal_length_x,
+#         fy=focal_length_y,
+#         cx=width / 2,
+#         cy=height / 2,
+#     )
+#     return camera
 
 def read_extrinsics(args : ArgumentParser):
     train_test_split = None
@@ -100,29 +103,36 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # init pyrender scene
-    scene = pyrender.Scene()
+    # scene = pyrender.Scene()
     mesh = trimesh.load(args.mesh)
-    mesh = pyrender.Mesh.from_trimesh(mesh)
-    scene.add(mesh)
+    # mesh = pyrender.Mesh.from_trimesh(mesh)
+    # scene.add(mesh)
 
-    intrinsics = read_intrinsics_binary(os.path.join(args.model, "sparse/0/cameras.bin"))
-    camera = get_camera(intrinsics[1], resolution=1)
+    # intrinsics = read_intrinsics_binary(os.path.join(args.model, "sparse/0/cameras.bin"))
+    # camera = get_camera(intrinsics[1], resolution=1)
     
-    camera_node = scene.add(camera)
+    # # camera_node = scene.add(camera)
     
-    # r = pyrender.OffscreenRenderer(1964, 1104)
-    r = pyrender.OffscreenRenderer(1920, 1440)
+    # # r = pyrender.OffscreenRenderer(1964, 1104)
+    # # r = pyrender.OffscreenRenderer(1920, 1440)
     
-    # Create output directory
+    # # Create output directory
     output_dir = "view_output"
     os.makedirs(output_dir, exist_ok=True)
-    print(f"Saving rendered images to: {os.path.abspath(output_dir)}")
+    # print(f"Saving rendered images to: {os.path.abspath(output_dir)}")
     
     test_extrinsics = read_extrinsics(args)
     for extrinsic_idx in tqdm(test_extrinsics, desc="Rendering views"):
-        extrinsic = test_extrinsics[extrinsic_idx]
-        camera_pose = getTranspose(extrinsic.qvec, extrinsic.tvec)
+        # if id >1:
+        #     break
+        # print()
         
+        extrinsic = test_extrinsics[extrinsic_idx]
+        
+        camera_pose = getTranspose(extrinsic.qvec, extrinsic.tvec)
+        print("id: ",extrinsic_idx)
+        print(extrinsic.qvec)
+        print(extrinsic.tvec)
         flip_yz = np.array([
             [1, 0, 0, 0],
             [0, -1, 0, 0],
@@ -134,16 +144,16 @@ if __name__ == "__main__":
         camera_pose = np.linalg.inv(camera_pose)
         
         # camera_pose = np.linalg.inv(extrinsic_matrix)
-        scene.set_pose(camera_node, pose=camera_pose)
+        # scene.set_pose(camera_node, pose=camera_pose)
         
-        # add light
-        light = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=1.0)
-        scene.add(light, pose=camera_pose)
-        color, depth = r.render(scene)
-        color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
-        color = cv2.resize(color, (color.shape[1]//2, color.shape[0]//2))
+        # # add light
+        # light = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=1.0)
+        # scene.add(light, pose=camera_pose)
+        # color, depth = r.render(scene)
+        # color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
+        # color = cv2.resize(color, (color.shape[1]//2, color.shape[0]//2))
         output_path = os.path.join(output_dir, extrinsic.name)
-        cv2.imwrite(output_path, color)
+        # cv2.imwrite(output_path, color)
     
     print(f"\nRendering complete! {len(test_extrinsics)} images saved to {os.path.abspath(output_dir)}")
 

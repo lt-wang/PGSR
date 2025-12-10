@@ -31,13 +31,23 @@ def erode(bin_img, ksize=12):
 
 def process_image(image_path, resolution, ncc_scale):
     image = Image.open(image_path)
-    if len(image.split()) > 3:
+    #car mask
+    mask_path = image_path.replace("images", "masks/sam")
+    if len(image.split()) > 3: #RGBA通道
         resized_image_rgb = torch.cat([PILtoTorch(im, resolution) for im in image.split()[:3]], dim=0)
         loaded_mask = PILtoTorch(image.split()[3], resolution)
         gt_image = resized_image_rgb
         if ncc_scale != 1.0:
             ncc_resolution = (int(resolution[0]/ncc_scale), int(resolution[1]/ncc_scale))
             resized_image_rgb = torch.cat([PILtoTorch(im, ncc_resolution) for im in image.split()[:3]], dim=0)
+    elif os.path.exists(mask_path): #存在mask文件
+        resized_image_rgb = PILtoTorch(image, resolution)
+        mask_pil = Image.open(mask_path)
+        loaded_mask = PILtoTorch(mask_pil, resolution)
+        gt_image = resized_image_rgb
+        if ncc_scale != 1.0:
+            ncc_resolution = (int(resolution[0]/ncc_scale), int(resolution[1]/ncc_scale))
+            resized_image_rgb = PILtoTorch(image, ncc_resolution)
     else:
         resized_image_rgb = PILtoTorch(image, resolution)
         loaded_mask = None
@@ -47,14 +57,28 @@ def process_image(image_path, resolution, ncc_scale):
             resized_image_rgb = PILtoTorch(image, ncc_resolution)
     gray_image = (0.299 * resized_image_rgb[0] + 0.587 * resized_image_rgb[1] + 0.114 * resized_image_rgb[2])[None]
     return gt_image, gray_image, loaded_mask
-
+def load_normal(image_path, resolution, ncc_scale):
+    #image = Image.open(image_path)
+    #normal_path 
+    normal_path = image_path.replace("images", "normals")
+    #print("法线：path")
+    #print(normal_path)
+    if os.path.exists(normal_path): #存在normal文件
+        #resized_image_rgb = PILtoTorch(image, resolution)
+        normal_pil = Image.open(normal_path)
+        loaded_normal = PILtoTorch(normal_pil, resolution)
+    else:
+        loaded_normal = None
+    return loaded_normal
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy,
                  image_width, image_height,
                  image_path, image_name, uid,
+                 normal = None,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, 
                  ncc_scale=1.0,
-                 preload_img=True, data_device = "cuda"
+                 preload_img=True, data_device = "cuda",
+                 preload_normal= False #新增
                  ):
         super(Camera, self).__init__()
         self.uid = uid
@@ -70,6 +94,15 @@ class Camera(nn.Module):
         self.image_width = image_width
         self.image_height = image_height
         self.resolution = (image_width, image_height)
+        # normal
+        # if normal is not None:
+        #     self.normal = normal.to(self.data_device)
+        #     normal_norm = torch.norm(self.normal, dim=0, keepdim=True)
+        #     #self.normal_mask = ~((normal_norm > 1.1) | (normal_norm < 0.9))
+        #     self.normal = self.normal / normal_norm
+        # else:
+        #     self.normal = None
+        #     #self.normal_mask = None
         self.Fx = fov2focal(FoVx, self.image_width)
         self.Fy = fov2focal(FoVy, self.image_height)
         self.Cx = 0.5 * self.image_width
@@ -83,14 +116,22 @@ class Camera(nn.Module):
 
         self.original_image, self.image_gray, self.mask = None, None, None
         self.preload_img = preload_img
+        self.preload_normal = preload_normal
         self.ncc_scale = ncc_scale
         if self.preload_img:
             gt_image, gray_image, loaded_mask = process_image(self.image_path, self.resolution, ncc_scale)
             self.original_image = gt_image.to(self.data_device)
             self.original_image_gray = gray_image.to(self.data_device)
-            self.mask = loaded_mask
-
-
+            self.mask = loaded_mask.to(self.data_device) 
+        #加载normal
+        if self.preload_normal:
+            self.normal = load_normal(self.image_path, self.resolution, ncc_scale).to(self.data_device)
+            normal_norm = torch.norm(self.normal, dim=0, keepdim=True)
+            self.normal_mask = ~((normal_norm > 1.1) | (normal_norm < 0.9))
+            self.normal = self.normal / normal_norm
+        else:
+            self.normal = None
+            self.normal_mask = None
         self.zfar = 100.0
         self.znear = 0.01
 

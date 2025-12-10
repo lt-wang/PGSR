@@ -101,7 +101,7 @@ def gen_virtul_cam(cam, trans_noise=1.0, deg_noise=15.0):
                         trans=np.array([0.0, 0.0, 0.0]), scale=1.0, 
                         preload_img=False, data_device = "cuda")
     return virtul_cam
-
+# 训练函数  用于3Drealcar
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     """
     主训练函数，执行3D高斯点云的训练过程
